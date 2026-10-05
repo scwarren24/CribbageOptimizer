@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cribbage Discard Optimizer</title>
+<style>
+:root{--bg:#e4ece6;--panel:#f7faf7;--ink:#14281e;--muted:#5b6e63;--line:#c3d1c7;--felt:#1c5a3d;--felt-ink:#f2f7f3;--brass:#9a6b12;--brass-bg:#f3e6c4;--red:#b3261e;--best:#dcefe2;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1a14;--panel:#17251d;--ink:#e7f0e9;--muted:#93a89b;--line:#2c4136;--felt:#2f8a5e;--felt-ink:#07140d;--brass:#e0b457;--brass-bg:#3a2f12;--red:#ff7b70;--best:#1d3a2a}}
+:root[data-theme="dark"]{--bg:#0f1a14;--panel:#17251d;--ink:#e7f0e9;--muted:#93a89b;--line:#2c4136;--felt:#2f8a5e;--felt-ink:#07140d;--brass:#e0b457;--brass-bg:#3a2f12;--red:#ff7b70;--best:#1d3a2a}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:760px;margin:0 auto;padding:20px 14px 40px}
+h1{font:700 28px/1.2 Georgia,"Times New Roman",serif;margin:0 0 4px}
+h2{font:600 18px/1.3 Georgia,serif;margin:0 0 10px}
+.sub{color:var(--muted);margin:0 0 18px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+.hand{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:10px}
+.slot{aspect-ratio:2/3;border:2px dashed var(--line);border-radius:6px;display:flex;align-items:center;justify-content:center;font:700 18px Georgia,serif;background:transparent;color:var(--ink);padding:0}
+.slot.on{border:2px solid var(--ink);background:#fff;color:#14281e;cursor:pointer}
+.red{color:var(--red)}
+.slot.on.red{color:#b3261e}
+.grid{display:grid;grid-template-columns:22px repeat(13,1fr);gap:3px;align-items:center}
+.grid .s{font-size:18px;text-align:center}
+.c{border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:4px;padding:6px 0;font:600 13px system-ui,sans-serif;cursor:pointer;min-width:0}
+.c:hover:not(:disabled){border-color:var(--felt)}
+.c.sel{background:var(--felt);color:var(--felt-ink);border-color:var(--felt)}
+.c:disabled{opacity:.35;cursor:not-allowed}
+:focus-visible{outline:3px solid var(--brass);outline-offset:2px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:transparent;color:var(--ink);padding:9px 14px;font:inherit;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--brass-bg);color:var(--ink);font-weight:700;box-shadow:inset 0 -3px 0 var(--brass)}
+.go{background:var(--felt);color:var(--felt-ink);border:0;border-radius:8px;padding:10px 20px;font:700 16px system-ui;cursor:pointer}
+.go:disabled{opacity:.4;cursor:not-allowed}
+.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:9px 14px;font:inherit;cursor:pointer}
+.msg{color:var(--muted);font-size:14px;margin:8px 0 0}
+.wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:480px}
+th,td{padding:8px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+th{font-weight:600;color:var(--muted);font-size:14px}
+tr.best td{background:var(--best)}
+td.net{font-weight:700}
+.chip{display:inline-block;margin-right:4px;font-weight:700}
+.tag{font-size:12px;background:var(--brass-bg);border-radius:4px;padding:1px 6px;margin-left:6px;font-weight:600}
+</style>
+</head>
+<body>
+<main>
+<h1>Cribbage discard optimizer</h1>
+<p class="sub">Pick the six cards you were dealt. You'll see every way to keep four, ranked by expected points.</p>
+
+<section>
+<h2>Your hand</h2>
+<div class="hand" id="hand" aria-live="polite"></div>
+<div class="grid" id="grid"></div>
+<div class="row">
+<div class="seg" role="group" aria-label="Whose crib is it?">
+<button id="mine" aria-pressed="true">My crib</button>
+<button id="theirs" aria-pressed="false">Opponent's crib</button>
+</div>
+<button class="go" id="go" disabled>Find best discard</button>
+<button class="ghost" id="clear">Clear hand</button>
+</div>
+<p class="msg" id="msg">Select 6 cards (0 of 6 chosen).</p>
+</section>
+
+<section id="out" hidden>
+<h2>Results</h2>
+<div class="wrap"><table>
+<thead><tr><th>Keep</th><th>Discard</th><th>Net</th><th>Hand</th><th>Crib</th></tr></thead>
+<tbody id="rows"></tbody>
+</table></div>
+<p class="msg">Net = hand average plus crib average on your crib, minus it on theirs. Hand and crib values are averages over the unseen starter cards.</p>
+</section>
+</main>
+
+<script>
+const RANKS=["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
+const SUITS=["C","D","H","S"];
+const SYM={C:"♣",D:"♦",H:"♥",S:"♠"};
+const mk=(r,s)=>({r,s,p:r==="A"?1:(r==="J"||r==="Q"||r==="K"?10:+r),v:RANKS.indexOf(r)+1});
+const pop=m=>{let c=0;while(m){c+=m&1;m>>=1}return c};
+const html=c=>`<span class="chip ${c.s==="D"||c.s==="H"?"red":""}">${c.r}${SYM[c.s]}</span>`;
+
+function scoreHand(hand,starter,isNotCrib){
+  const cards=hand.concat([starter]),n=cards.length;let sc=0;
+  for(let m=1;m<(1<<n);m++){
+    if(pop(m)<2)continue;
+    let t=0;for(let i=0;i<n;i++)if(m>>i&1)t+=cards[i].p;
+    if(t===15)sc+=2;
+  }
+  for(let i=0;i<n;i++)for(let j=i+1;j<n;j++)if(cards[i].r===cards[j].r)sc+=2;
+  for(let size=n;size>=3;size--){
+    let rs=0;
+    for(let m=1;m<(1<<n);m++){
+      if(pop(m)!==size)continue;
+      const v=[];for(let i=0;i<n;i++)if(m>>i&1)v.push(cards[i].v);
+      v.sort((a,b)=>a-b);
+      if(new Set(v).size===size&&v[size-1]-v[0]===size-1)rs+=size;
+    }
+    if(rs){sc+=rs;break}
+  }
+  if(hand.every(c=>c.s===hand[0].s)){
+    // Matches the original flush(): with a starter present, both the crib and non-crib paths give 5 on a match, else 4.
+    sc+=hand[0].s===starter.s?5:4;
+  }
+  if(hand.some(c=>c.r==="J"&&c.s===starter.s))sc+=1;
+  return sc;
+}
+function expectedWithStarter(hand,deck,isNotCrib){
+  let t=0;for(const c of deck)t+=scoreHand(hand,c,isNotCrib);
+  return t/deck.length;
+}
+function cribExpected(discard,deck,counts){
+  let total=0,n=0;
+  const free=SUITS.filter(s=>s!==discard[0].s&&s!==discard[1].s);
+  for(let i=0;i<RANKS.length;i++)for(let j=i;j<RANKS.length;j++){
+    const a=RANKS[i],b=RANKS[j];
+    const times=a===b?counts[a]*(counts[a]-1)/2:counts[a]*counts[b];
+    if(!times)continue;
+    const hand=discard.concat([mk(a,free[0]),mk(b,free[1])]);
+    total+=times*expectedWithStarter(hand,deck,false);
+    n+=times;
+  }
+  let res=total/n;
+  if(discard[0].s===discard[1].s){
+    const s=deck.filter(c=>c.s===discard[0].s).length,N=deck.length;
+    res+=5*(s/N)*((s-1)/(N-1))*((s-2)/(N-2));
+  }
+  return res;
+}
+function combos4(a){
+  const out=[];
+  for(let i=0;i<a.length;i++)for(let j=i+1;j<a.length;j++)for(let k=j+1;k<a.length;k++)for(let l=k+1;l<a.length;l++)out.push([a[i],a[j],a[k],a[l]]);
+  return out;
+}
+function analyze(cards,myCrib){
+  const keys=new Set(cards.map(c=>c.r+c.s));
+  const deck=[],counts={};
+  RANKS.forEach(r=>counts[r]=4);
+  cards.forEach(c=>counts[c.r]--);
+  for(const s of SUITS)for(const r of RANKS)if(!keys.has(r+s))deck.push(mk(r,s));
+  const res=[];
+  for(const keep of combos4(cards)){
+    const discard=cards.filter(c=>!keep.includes(c));
+    const hand=expectedWithStarter(keep,deck,true);
+    const crib=cribExpected(discard,deck,counts);
+    res.push({keep,discard,hand,crib,net:myCrib?hand+crib:hand-crib});
+  }
+  return res.sort((a,b)=>b.net-a.net);
+}
+
+// UI
+let picked=[],myCrib=true;
+const $=id=>document.getElementById(id);
+function render(){
+  $("hand").innerHTML=Array.from({length:6},(_,i)=>{
+    const c=picked[i];
+    return c?`<button class="slot on ${c.s==="D"||c.s==="H"?"red":""}" data-rm="${i}" aria-label="Remove ${c.r}${SYM[c.s]}">${c.r}${SYM[c.s]}</button>`:`<div class="slot"></div>`;
+  }).join("");
+  const full=picked.length===6;
+  document.querySelectorAll(".c").forEach(b=>{
+    const on=picked.some(c=>c.r+c.s===b.dataset.k);
+    b.classList.toggle("sel",on);
+    b.disabled=full&&!on;
+  });
+  $("go").disabled=!full;
+  $("msg").textContent=`Select 6 cards (${picked.length} of 6 chosen).`;
+}
+$("grid").innerHTML=SUITS.map(s=>`<span class="s ${s==="D"||s==="H"?"red":""}">${SYM[s]}</span>`+RANKS.map(r=>`<button class="c" data-k="${r}${s}" aria-label="${r} of ${SYM[s]}">${r}</button>`).join("")).join("");
+$("grid").onclick=e=>{
+  const b=e.target.closest(".c");if(!b||b.disabled)return;
+  const k=b.dataset.k,i=picked.findIndex(c=>c.r+c.s===k);
+  if(i>=0)picked.splice(i,1);else if(picked.length<6)picked.push(mk(k.slice(0,-1),k.slice(-1)));
+  render();
+};
+$("hand").onclick=e=>{const b=e.target.closest("[data-rm]");if(b){picked.splice(+b.dataset.rm,1);render()}};
+$("clear").onclick=()=>{picked=[];$("out").hidden=true;render()};
+function setCrib(v){myCrib=v;$("mine").setAttribute("aria-pressed",v);$("theirs").setAttribute("aria-pressed",!v);if(!$("out").hidden&&picked.length===6)run()}
+$("mine").onclick=()=>setCrib(true);
+$("theirs").onclick=()=>setCrib(false);
+function run(){
+  const r=analyze(picked,myCrib);
+  $("rows").innerHTML=r.map((x,i)=>`<tr class="${i===0?"best":""}"><td>${x.keep.map(html).join("")}${i===0?'<span class="tag">best</span>':""}</td><td>${x.discard.map(html).join("")}</td><td class="net">${x.net.toFixed(2)}</td><td>${x.hand.toFixed(2)}</td><td>${x.crib.toFixed(2)}</td></tr>`).join("");
+  $("out").hidden=false;
+}
+$("go").onclick=()=>{
+  $("msg").textContent="Calculating…";
+  setTimeout(()=>{run();render();$("out").scrollIntoView({behavior:"smooth",block:"start"})},20);
+};
+render();
+</script>
+</body>
+</html>
